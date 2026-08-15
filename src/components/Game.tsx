@@ -92,7 +92,13 @@ export function Game() {
       }
     } catch (error) {
       console.error('Failed to load game state:', error);
-      if (error instanceof ApiRequestError && (error.code === 'player_not_found' || error.statusCode === 404)) {
+      if (
+        error instanceof ApiRequestError &&
+        (error.code === 'player_not_found' ||
+         error.code === 'invalid_player_id' ||
+         error.statusCode === 400 ||
+         error.statusCode === 404)
+      ) {
         try {
           const freshId = await createFreshPlayerId();
           setPlayerId(freshId);
@@ -106,6 +112,7 @@ export function Game() {
           console.error('Failed auto-recovering player:', retryErr);
         }
       }
+
       setErrorMessage('Could not connect to the server. Please check your connection.');
       setUIState('error');
     }
