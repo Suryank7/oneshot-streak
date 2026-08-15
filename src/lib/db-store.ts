@@ -3,11 +3,12 @@
 // ============================================================
 // Automatically uses Supabase PostgreSQL DB when env vars exist.
 // Supports SUPABASE_URL and NEXT_PUBLIC_SUPABASE_URL.
-// Automatically seeds today's puzzle if database row is missing.
+// Uses os.tmpdir() for file fallback to prevent EROFS read-only errors on Vercel.
 // ============================================================
 
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { supabase } from './supabase';
 import type { Player, Puzzle, Attempt, PuzzleClues } from './types';
 
@@ -41,7 +42,10 @@ interface FileDB {
   attempts: Attempt[];
 }
 
-const DB_PATH = path.join(process.cwd(), '.data', 'db.json');
+// Use os.tmpdir() on Vercel to prevent read-only filesystem errors (EROFS)
+const DB_PATH = (process.env.VERCEL || process.env.NODE_ENV === 'production')
+  ? path.join(os.tmpdir(), 'streak-db.json')
+  : path.join(process.cwd(), '.data', 'db.json');
 
 function isSupabaseConfigured(): boolean {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -132,6 +136,7 @@ async function ensureTodayPuzzleInSupabase(gameDate: string): Promise<Puzzle | n
       .single();
 
     if (!error && data) return data as Puzzle;
+    if (error) console.warn('Supabase ensureTodayPuzzle insert notice:', error.message);
   } catch (e) {
     console.warn('Failed to seed today puzzle in Supabase:', e);
   }
@@ -149,9 +154,9 @@ export async function dbCreatePlayer(): Promise<string> {
         .select('id')
         .single();
       if (!error && data) return data.id;
-      console.warn('Supabase createPlayer query returned error:', error);
+      console.warn('Supabase createPlayer returned notice:', error);
     } catch (e) {
-      console.warn('Supabase createPlayer failed, using file fallback:', e);
+      console.warn('Supabase createPlayer Exception:', e);
     }
   }
 
@@ -201,7 +206,6 @@ export async function dbPlayerExists(playerId: string): Promise<boolean> {
   const db = loadFileDB();
   return db.players.some(p => p.id === playerId);
 }
-
 
 export async function dbGetTodaysPuzzleClues(gameDate: string): Promise<{ id: number; clues: PuzzleClues } | null> {
   if (isSupabaseConfigured()) {

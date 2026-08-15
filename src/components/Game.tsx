@@ -113,9 +113,14 @@ export function Game() {
         }
       }
 
-      setErrorMessage('Could not connect to the server. Please check your connection.');
+      if (error instanceof ApiRequestError) {
+        setErrorMessage(error.message || 'Could not connect to the server.');
+      } else {
+        setErrorMessage('Could not connect to the server. Please check your connection.');
+      }
       setUIState('error');
     }
+
 
   }, []);
 

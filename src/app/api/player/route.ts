@@ -17,10 +17,11 @@ export async function POST() {
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
     console.error('Failed to create player:', error);
+    const detail = error instanceof Error ? error.message : String(error);
 
     const errorResponse: ApiError = {
       error: 'player_creation_failed',
-      message: 'Could not create player. Please try again.',
+      message: `Could not create player: ${detail}`,
     };
 
     return NextResponse.json(errorResponse, { status: 500 });
