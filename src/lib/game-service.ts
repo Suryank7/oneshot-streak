@@ -15,12 +15,14 @@ import { calculateStreak, getPreviousDay } from './streak';
 import {
   dbCreatePlayer,
   dbPlayerExists,
+  dbEnsurePlayerExists,
   dbGetTodaysPuzzleClues,
   dbGetTodaysPuzzleFull,
   dbGetAttemptForDate,
   dbGetAllAttempts,
   dbRecordAttempt,
 } from './db-store';
+
 import type {
   PuzzleResponse,
   GuessResponse,
@@ -36,6 +38,11 @@ export async function createPlayer(): Promise<string> {
 export async function playerExists(playerId: string): Promise<boolean> {
   return await dbPlayerExists(playerId);
 }
+
+export async function ensurePlayerExists(playerId: string): Promise<boolean> {
+  return await dbEnsurePlayerExists(playerId);
+}
+
 
 // --- Main Game Operations ---
 

@@ -162,6 +162,28 @@ export async function dbCreatePlayer(): Promise<string> {
   return id;
 }
 
+export async function dbEnsurePlayerExists(playerId: string): Promise<boolean> {
+  if (isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from('players')
+        .upsert({ id: playerId }, { onConflict: 'id' })
+        .select('id')
+        .single();
+      if (!error && data) return true;
+    } catch (e) {
+      console.warn('Supabase ensurePlayerExists failed:', e);
+    }
+  }
+
+  const db = loadFileDB();
+  if (!db.players.some(p => p.id === playerId)) {
+    db.players.push({ id: playerId, created_at: new Date().toISOString() });
+    saveFileDB(db);
+  }
+  return true;
+}
+
 export async function dbPlayerExists(playerId: string): Promise<boolean> {
   if (isSupabaseConfigured()) {
     try {
@@ -169,7 +191,7 @@ export async function dbPlayerExists(playerId: string): Promise<boolean> {
         .from('players')
         .select('id')
         .eq('id', playerId)
-        .single();
+        .maybeSingle();
       if (!error && data) return true;
     } catch (e) {
       console.warn('Supabase playerExists failed, using file fallback');
@@ -179,6 +201,7 @@ export async function dbPlayerExists(playerId: string): Promise<boolean> {
   const db = loadFileDB();
   return db.players.some(p => p.id === playerId);
 }
+
 
 export async function dbGetTodaysPuzzleClues(gameDate: string): Promise<{ id: number; clues: PuzzleClues } | null> {
   if (isSupabaseConfigured()) {

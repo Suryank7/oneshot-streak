@@ -6,7 +6,8 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getPlayerGameState, playerExists } from '@/lib/game-service';
+import { getPlayerGameState, playerExists, ensurePlayerExists } from '@/lib/game-service';
+
 import type { ApiError } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
@@ -32,15 +33,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(errorResponse, { status: 400 });
   }
 
-  // Verify player exists
+  // Ensure player exists (auto-register if valid UUID)
   const exists = await playerExists(playerId);
   if (!exists) {
-    const errorResponse: ApiError = {
-      error: 'player_not_found',
-      message: 'Player not found.',
-    };
-    return NextResponse.json(errorResponse, { status: 404 });
+    await ensurePlayerExists(playerId);
   }
+
 
   try {
     const gameState = await getPlayerGameState(playerId);

@@ -6,7 +6,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api, ApiRequestError } from '@/lib/api';
-import { getOrCreatePlayerId } from '@/lib/player';
+import { getOrCreatePlayerId, createFreshPlayerId } from '@/lib/player';
+
 import { PuzzleCard } from './PuzzleCard';
 import { ResultCard } from './ResultCard';
 import { StreakDisplay } from './StreakDisplay';
@@ -91,9 +92,24 @@ export function Game() {
       }
     } catch (error) {
       console.error('Failed to load game state:', error);
+      if (error instanceof ApiRequestError && (error.code === 'player_not_found' || error.statusCode === 404)) {
+        try {
+          const freshId = await createFreshPlayerId();
+          setPlayerId(freshId);
+          const gameState: PuzzleResponse = await api.getPuzzle(freshId);
+          setPuzzle(gameState.puzzle);
+          setStreak(gameState.streak);
+          setNextPuzzleAt(gameState.next_puzzle_at);
+          setUIState(gameState.state === 'unavailable' ? 'unavailable' : 'ready');
+          return;
+        } catch (retryErr) {
+          console.error('Failed auto-recovering player:', retryErr);
+        }
+      }
       setErrorMessage('Could not connect to the server. Please check your connection.');
       setUIState('error');
     }
+
   }, []);
 
   useEffect(() => {
