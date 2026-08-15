@@ -119,11 +119,9 @@ export async function submitGuess(
     throw new GameError('invalid_guess', 'Guess must be a whole number between 1 and 50.', 400);
   }
 
-  // 2. Verify player exists
-  const exists = await playerExists(playerId);
-  if (!exists) {
-    throw new GameError('invalid_player', 'Player not found.', 400);
-  }
+  // 2. Ensure player exists (auto-register if valid UUID)
+  await ensurePlayerExists(playerId);
+
 
   // 3. Get today's puzzle (with answer — server side only)
   const puzzle = await dbGetTodaysPuzzleFull(gameDate);

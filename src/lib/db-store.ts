@@ -3,7 +3,8 @@
 // ============================================================
 // Automatically uses Supabase PostgreSQL DB when env vars exist.
 // Supports SUPABASE_URL and NEXT_PUBLIC_SUPABASE_URL.
-// Uses os.tmpdir() for file fallback to prevent EROFS read-only errors on Vercel.
+// Explicitly inserts UUIDs and auto-ensures player rows exist in
+// Supabase before attempt queries to eliminate foreign key violations.
 // ============================================================
 
 import fs from 'fs';
@@ -146,25 +147,30 @@ async function ensureTodayPuzzleInSupabase(gameDate: string): Promise<Puzzle | n
 // --- Store Interface Implementation ---
 
 export async function dbCreatePlayer(): Promise<string> {
+  const newId = crypto.randomUUID();
+
   if (isSupabaseConfigured()) {
     try {
+      // Explicitly pass id and created_at payload to prevent PostgREST empty insert failures
       const { data, error } = await supabase
         .from('players')
-        .insert({})
+        .insert({
+          id: newId,
+          created_at: new Date().toISOString()
+        })
         .select('id')
         .single();
       if (!error && data) return data.id;
-      console.warn('Supabase createPlayer returned notice:', error);
+      console.warn('Supabase dbCreatePlayer notice:', error?.message);
     } catch (e) {
-      console.warn('Supabase createPlayer Exception:', e);
+      console.warn('Supabase dbCreatePlayer exception:', e);
     }
   }
 
   const db = loadFileDB();
-  const id = crypto.randomUUID();
-  db.players.push({ id, created_at: new Date().toISOString() });
+  db.players.push({ id: newId, created_at: new Date().toISOString() });
   saveFileDB(db);
-  return id;
+  return newId;
 }
 
 export async function dbEnsurePlayerExists(playerId: string): Promise<boolean> {
@@ -172,12 +178,13 @@ export async function dbEnsurePlayerExists(playerId: string): Promise<boolean> {
     try {
       const { data, error } = await supabase
         .from('players')
-        .upsert({ id: playerId }, { onConflict: 'id' })
+        .upsert({ id: playerId, created_at: new Date().toISOString() }, { onConflict: 'id' })
         .select('id')
         .single();
       if (!error && data) return true;
+      if (error) console.warn('Supabase dbEnsurePlayerExists notice:', error.message);
     } catch (e) {
-      console.warn('Supabase ensurePlayerExists failed:', e);
+      console.warn('Supabase dbEnsurePlayerExists exception:', e);
     }
   }
 
@@ -199,7 +206,7 @@ export async function dbPlayerExists(playerId: string): Promise<boolean> {
         .maybeSingle();
       if (!error && data) return true;
     } catch (e) {
-      console.warn('Supabase playerExists failed, using file fallback');
+      console.warn('Supabase dbPlayerExists failed, using file fallback');
     }
   }
 
@@ -231,7 +238,7 @@ export async function dbGetTodaysPuzzleClues(gameDate: string): Promise<{ id: nu
         };
       }
     } catch (e) {
-      console.warn('Supabase getTodaysPuzzleClues failed, using file fallback');
+      console.warn('Supabase dbGetTodaysPuzzleClues failed, using file fallback');
     }
   }
 
@@ -260,7 +267,7 @@ export async function dbGetTodaysPuzzleFull(gameDate: string): Promise<Puzzle | 
         return data as Puzzle;
       }
     } catch (e) {
-      console.warn('Supabase getTodaysPuzzleFull failed, using file fallback');
+      console.warn('Supabase dbGetTodaysPuzzleFull failed, using file fallback');
     }
   }
 
@@ -270,6 +277,8 @@ export async function dbGetTodaysPuzzleFull(gameDate: string): Promise<Puzzle | 
 }
 
 export async function dbGetAttemptForDate(playerId: string, gameDate: string): Promise<Attempt | null> {
+  await dbEnsurePlayerExists(playerId);
+
   if (isSupabaseConfigured()) {
     try {
       const { data, error } = await supabase
@@ -280,7 +289,7 @@ export async function dbGetAttemptForDate(playerId: string, gameDate: string): P
         .maybeSingle();
       if (!error && data) return data as Attempt;
     } catch (e) {
-      console.warn('Supabase getAttemptForDate failed, using file fallback');
+      console.warn('Supabase dbGetAttemptForDate failed, using file fallback');
     }
   }
 
@@ -290,6 +299,8 @@ export async function dbGetAttemptForDate(playerId: string, gameDate: string): P
 }
 
 export async function dbGetAllAttempts(playerId: string): Promise<Attempt[]> {
+  await dbEnsurePlayerExists(playerId);
+
   if (isSupabaseConfigured()) {
     try {
       const { data, error } = await supabase
@@ -299,7 +310,7 @@ export async function dbGetAllAttempts(playerId: string): Promise<Attempt[]> {
         .order('game_date', { ascending: false });
       if (!error && data) return data as Attempt[];
     } catch (e) {
-      console.warn('Supabase getAllAttempts failed, using file fallback');
+      console.warn('Supabase dbGetAllAttempts failed, using file fallback');
     }
   }
 
@@ -316,6 +327,9 @@ export async function dbRecordAttempt(
   guess: number,
   isCorrect: boolean
 ): Promise<{ success: boolean; isDuplicate: boolean }> {
+  // Always guarantee player row exists in Supabase before attempt insert to eliminate foreign key violations
+  await dbEnsurePlayerExists(playerId);
+
   if (isSupabaseConfigured()) {
     try {
       const { error } = await supabase
@@ -330,8 +344,9 @@ export async function dbRecordAttempt(
 
       if (!error) return { success: true, isDuplicate: false };
       if (error.code === '23505') return { success: false, isDuplicate: true };
+      console.warn('Supabase dbRecordAttempt notice:', error.message);
     } catch (e) {
-      console.warn('Supabase recordAttempt failed, using file fallback');
+      console.warn('Supabase dbRecordAttempt failed, using file fallback:', e);
     }
   }
 
