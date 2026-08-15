@@ -1,10 +1,9 @@
 // ============================================================
 // Streak — Storage Abstraction Layer (Supabase + File Fallback)
 // ============================================================
-// Automatically attempts to use Supabase PostgreSQL DB.
-// If Supabase environment variables are missing, placeholder,
-// or connection fails, seamlessly falls back to a file-backed
-// JSON store (.data/db.json) that survives server restarts.
+// Automatically uses Supabase PostgreSQL DB when env vars exist.
+// Supports SUPABASE_URL and NEXT_PUBLIC_SUPABASE_URL.
+// Automatically seeds today's puzzle if database row is missing.
 // ============================================================
 
 import fs from 'fs';
@@ -45,8 +44,8 @@ interface FileDB {
 const DB_PATH = path.join(process.cwd(), '.data', 'db.json');
 
 function isSupabaseConfigured(): boolean {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return false;
   if (url.includes('your-project') || key.includes('your-service-role-key')) return false;
   return true;
@@ -96,16 +95,12 @@ function saveFileDB(db: FileDB) {
   }
 }
 
-/**
- * Ensures a puzzle exists for current date in file DB if outside 2026-08-15 range
- */
 function ensureTodayPuzzleInFileDB(db: FileDB) {
   const now = new Date();
   const todayStr = now.toLocaleDateString('en-CA', { timeZone: process.env.GAME_TIMEZONE || 'Asia/Kolkata' });
   const exists = db.puzzles.some(p => p.game_date === todayStr);
 
   if (!exists) {
-    // Clone first puzzle for today so the game is always playable
     const template = INITIAL_PUZZLES[0];
     db.puzzles.push({
       id: db.puzzles.length + 1,
@@ -120,6 +115,29 @@ function ensureTodayPuzzleInFileDB(db: FileDB) {
   }
 }
 
+async function ensureTodayPuzzleInSupabase(gameDate: string): Promise<Puzzle | null> {
+  const template = INITIAL_PUZZLES.find(p => p.game_date === gameDate) || INITIAL_PUZZLES[0];
+  try {
+    const { data, error } = await supabase
+      .from('puzzles')
+      .insert({
+        game_date: gameDate,
+        clue_1: template.clue_1,
+        clue_2: template.clue_2,
+        clue_3: template.clue_3,
+        answer: template.answer,
+        difficulty: template.difficulty
+      })
+      .select('*')
+      .single();
+
+    if (!error && data) return data as Puzzle;
+  } catch (e) {
+    console.warn('Failed to seed today puzzle in Supabase:', e);
+  }
+  return null;
+}
+
 // --- Store Interface Implementation ---
 
 export async function dbCreatePlayer(): Promise<string> {
@@ -131,12 +149,12 @@ export async function dbCreatePlayer(): Promise<string> {
         .select('id')
         .single();
       if (!error && data) return data.id;
+      console.warn('Supabase createPlayer query returned error:', error);
     } catch (e) {
       console.warn('Supabase createPlayer failed, using file fallback:', e);
     }
   }
 
-  // Fallback
   const db = loadFileDB();
   const id = crypto.randomUUID();
   db.players.push({ id, created_at: new Date().toISOString() });
@@ -165,12 +183,21 @@ export async function dbPlayerExists(playerId: string): Promise<boolean> {
 export async function dbGetTodaysPuzzleClues(gameDate: string): Promise<{ id: number; clues: PuzzleClues } | null> {
   if (isSupabaseConfigured()) {
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('puzzles')
         .select('id, clue_1, clue_2, clue_3')
         .eq('game_date', gameDate)
-        .single();
-      if (!error && data) {
+        .maybeSingle();
+
+      if (!data) {
+        const created = await ensureTodayPuzzleInSupabase(gameDate);
+        if (created) {
+          return {
+            id: created.id,
+            clues: { clue_1: created.clue_1, clue_2: created.clue_2, clue_3: created.clue_3 }
+          };
+        }
+      } else if (!error && data) {
         return {
           id: data.id,
           clues: { clue_1: data.clue_1, clue_2: data.clue_2, clue_3: data.clue_3 }
@@ -193,12 +220,18 @@ export async function dbGetTodaysPuzzleClues(gameDate: string): Promise<{ id: nu
 export async function dbGetTodaysPuzzleFull(gameDate: string): Promise<Puzzle | null> {
   if (isSupabaseConfigured()) {
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('puzzles')
         .select('*')
         .eq('game_date', gameDate)
-        .single();
-      if (!error && data) return data as Puzzle;
+        .maybeSingle();
+
+      if (!data) {
+        const created = await ensureTodayPuzzleInSupabase(gameDate);
+        if (created) return created;
+      } else if (!error && data) {
+        return data as Puzzle;
+      }
     } catch (e) {
       console.warn('Supabase getTodaysPuzzleFull failed, using file fallback');
     }
@@ -217,7 +250,7 @@ export async function dbGetAttemptForDate(playerId: string, gameDate: string): P
         .select('*')
         .eq('player_id', playerId)
         .eq('game_date', gameDate)
-        .single();
+        .maybeSingle();
       if (!error && data) return data as Attempt;
     } catch (e) {
       console.warn('Supabase getAttemptForDate failed, using file fallback');
